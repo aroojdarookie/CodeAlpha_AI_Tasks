@@ -1,8 +1,5 @@
-from flask import Flask, render_template_string, send_file, request
-import numpy as np
-from midiutil import MIDIFile
-import io
-import random
+from flask import Flask, render_template_string, request
+from deep_translator import GoogleTranslator
 
 app = Flask(__name__)
 
@@ -10,432 +7,503 @@ HTML = '''
 <!DOCTYPE html>
 <html>
 <head>
-    <title>AI Music Generator</title>
+    <title>AI Translator</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            background: #050510;
             min-height: 100vh;
+            background: #020008;
             font-family: 'Arial', sans-serif;
+            overflow-x: hidden;
             display: flex;
             flex-direction: column;
             align-items: center;
             padding: 40px 20px;
-            overflow-x: hidden;
         }
 
-        .stars {
+        /* Animated background orbs */
+        .orb {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(80px);
+            opacity: 0.15;
+            pointer-events: none;
+            animation: orbFloat 8s ease-in-out infinite;
+        }
+        .orb1 { width: 500px; height: 500px; background: #7c3aed; top: -100px; left: -100px; animation-delay: 0s; }
+        .orb2 { width: 400px; height: 400px; background: #db2777; top: 50%; right: -100px; animation-delay: 2s; }
+        .orb3 { width: 350px; height: 350px; background: #2563eb; bottom: -100px; left: 30%; animation-delay: 4s; }
+
+        @keyframes orbFloat {
+            0%, 100% { transform: translateY(0) scale(1); }
+            50% { transform: translateY(-30px) scale(1.05); }
+        }
+
+        /* Grid lines background */
+        .grid-bg {
             position: fixed;
             top: 0; left: 0;
             width: 100%; height: 100%;
+            background-image:
+                linear-gradient(rgba(167,139,250,0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(167,139,250,0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
             pointer-events: none;
-            z-index: 0;
-        }
-
-        .star {
-            position: absolute;
-            background: white;
-            border-radius: 50%;
-            animation: twinkle 3s infinite;
-        }
-
-        @keyframes twinkle {
-            0%, 100% { opacity: 0.2; }
-            50% { opacity: 1; }
         }
 
         .content {
             position: relative;
             z-index: 1;
             width: 100%;
-            max-width: 650px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
+            max-width: 900px;
         }
 
-        .logo {
-            font-size: 4rem;
-            margin-bottom: 10px;
-            animation: float 3s ease-in-out infinite;
-        }
-
-        @keyframes float {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-10px); }
-        }
-
-        h1 {
-            font-size: 2.8rem;
-            font-weight: 900;
-            background: linear-gradient(90deg, #ff6eb4, #a78bfa, #60a5fa, #34d399);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-size: 300% 300%;
-            animation: gradientShift 4s ease infinite;
+        /* Header */
+        .header {
             text-align: center;
-            margin-bottom: 8px;
-        }
-
-        @keyframes gradientShift {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
-
-        .subtitle {
-            color: #6b7280;
-            letter-spacing: 3px;
-            text-transform: uppercase;
-            font-size: 0.75rem;
             margin-bottom: 50px;
         }
 
-        .card {
-            background: rgba(255,255,255,0.03);
-            border: 1px solid rgba(167,139,250,0.2);
-            border-radius: 24px;
-            padding: 40px;
-            width: 100%;
-            backdrop-filter: blur(20px);
-            box-shadow: 0 0 60px rgba(167,139,250,0.1), inset 0 1px 0 rgba(255,255,255,0.05);
-        }
-
-        .genre-grid {
-            display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            gap: 10px;
-            margin-bottom: 32px;
-        }
-
-        .genre-btn {
-            background: rgba(255,255,255,0.04);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 12px;
-            padding: 14px 6px;
-            color: #9ca3af;
-            cursor: pointer;
-            text-align: center;
-            transition: all 0.2s;
-            font-size: 0.8rem;
-        }
-
-        .genre-btn:hover {
-            border-color: #a78bfa;
+        .badge {
+            display: inline-block;
+            background: rgba(124,58,237,0.2);
+            border: 1px solid rgba(124,58,237,0.4);
             color: #a78bfa;
-            background: rgba(167,139,250,0.1);
-        }
-
-        .genre-btn.active {
-            border-color: #a78bfa;
-            background: rgba(167,139,250,0.15);
-            color: #a78bfa;
-            box-shadow: 0 0 20px rgba(167,139,250,0.2);
-        }
-
-        .genre-icon { font-size: 1.5rem; display: block; margin-bottom: 6px; }
-
-        .hidden-select { display: none; }
-
-        .slider-group {
-            margin-bottom: 28px;
-        }
-
-        .slider-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-
-        .slider-label {
-            color: #9ca3af;
-            font-size: 0.85rem;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-
-        .slider-value {
-            color: #f472b6;
-            font-weight: bold;
-            font-size: 0.95rem;
-            background: rgba(244,114,182,0.1);
-            padding: 4px 12px;
+            padding: 6px 20px;
             border-radius: 20px;
-            border: 1px solid rgba(244,114,182,0.3);
-        }
-
-        input[type=range] {
-            width: 100%;
-            height: 6px;
-            -webkit-appearance: none;
-            background: rgba(255,255,255,0.08);
-            border-radius: 3px;
-            outline: none;
-        }
-
-        input[type=range]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #f472b6, #a78bfa);
-            cursor: pointer;
-            box-shadow: 0 0 10px rgba(244,114,182,0.5);
-        }
-
-        .generate-btn {
-            width: 100%;
-            padding: 18px;
-            background: linear-gradient(135deg, #7c3aed, #db2777, #2563eb);
-            background-size: 200% 200%;
-            animation: gradientShift 3s ease infinite;
-            border: none;
-            border-radius: 14px;
-            color: white;
-            font-size: 1.1rem;
-            font-weight: bold;
-            cursor: pointer;
-            letter-spacing: 1px;
-            box-shadow: 0 4px 30px rgba(124,58,237,0.4);
-            transition: transform 0.1s;
-        }
-
-        .generate-btn:hover { transform: scale(1.02); }
-        .generate-btn:active { transform: scale(0.98); }
-
-        .result-card {
-            margin-top: 24px;
-            background: rgba(50,205,50,0.05);
-            border: 1px solid rgba(50,205,50,0.2);
-            border-radius: 16px;
-            padding: 24px;
-            text-align: center;
-        }
-
-        .result-title {
-            color: #34d399;
-            font-size: 1rem;
+            font-size: 0.75rem;
+            letter-spacing: 3px;
+            text-transform: uppercase;
             margin-bottom: 20px;
-            letter-spacing: 1px;
         }
 
-        .visualizer {
-            display: flex;
-            align-items: flex-end;
-            justify-content: center;
-            gap: 3px;
-            height: 70px;
+        h1 {
+            font-size: 3.5rem;
+            font-weight: 900;
+            line-height: 1.1;
+            margin-bottom: 16px;
+        }
+
+        .gradient-text {
+            background: linear-gradient(135deg, #ffffff 0%, #a78bfa 50%, #f472b6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header p {
+            color: #4b5563;
+            font-size: 1rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        /* 3D Card */
+        .translator-card {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 28px;
+            padding: 40px;
+            backdrop-filter: blur(40px);
+            box-shadow:
+                0 0 0 1px rgba(255,255,255,0.04),
+                0 20px 60px rgba(0,0,0,0.5),
+                0 0 100px rgba(124,58,237,0.08),
+                inset 0 1px 0 rgba(255,255,255,0.06);
+            transform: perspective(1000px) rotateX(1deg);
+            transition: transform 0.3s ease;
+        }
+
+        .translator-card:hover {
+            transform: perspective(1000px) rotateX(0deg) translateY(-4px);
+        }
+
+        /* Language selectors row */
+        .lang-row {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 16px;
+            align-items: center;
             margin-bottom: 24px;
         }
 
-        .bar {
-            width: 6px;
-            border-radius: 3px;
-            animation: dance 0.8s ease-in-out infinite alternate;
+        .lang-select-wrap {
+            position: relative;
         }
 
-        @keyframes dance {
-            from { transform: scaleY(0.2); }
-            to { transform: scaleY(1); }
+        .lang-label {
+            font-size: 0.7rem;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 8px;
         }
 
-        .download-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
-            padding: 14px 32px;
-            background: rgba(96,165,250,0.1);
-            border: 1px solid rgba(96,165,250,0.4);
+        select {
+            width: 100%;
+            padding: 14px 18px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 14px;
+            color: white;
+            font-size: 0.95rem;
+            outline: none;
+            cursor: pointer;
+            transition: all 0.2s;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 16px center;
+        }
+
+        select:focus {
+            border-color: rgba(167,139,250,0.5);
+            background-color: rgba(167,139,250,0.05);
+            box-shadow: 0 0 0 3px rgba(167,139,250,0.1);
+        }
+
+        select option { background: #0d0d1a; }
+
+        .swap-btn {
+            width: 44px;
+            height: 44px;
+            background: rgba(167,139,250,0.1);
+            border: 1px solid rgba(167,139,250,0.3);
             border-radius: 12px;
-            color: #60a5fa;
-            text-decoration: none;
-            font-size: 1rem;
+            color: #a78bfa;
+            font-size: 1.1rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-top: 22px;
             transition: all 0.2s;
         }
 
-        .download-btn:hover {
-            background: rgba(96,165,250,0.2);
-            box-shadow: 0 0 20px rgba(96,165,250,0.3);
+        .swap-btn:hover {
+            background: rgba(167,139,250,0.2);
+            transform: rotate(180deg);
         }
 
-        .info-row {
+        /* Text areas */
+        .areas-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .area-wrap {
+            position: relative;
+        }
+
+        .area-label {
+            font-size: 0.7rem;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 8px;
+        }
+
+        textarea {
+            width: 100%;
+            height: 180px;
+            padding: 18px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 16px;
+            color: white;
+            font-size: 1rem;
+            resize: none;
+            outline: none;
+            line-height: 1.6;
+            transition: all 0.2s;
+        }
+
+        textarea:focus {
+            border-color: rgba(167,139,250,0.4);
+            background: rgba(167,139,250,0.04);
+            box-shadow: 0 0 0 3px rgba(167,139,250,0.08);
+        }
+
+        textarea::placeholder { color: #374151; }
+
+        .result-area {
+            background: rgba(167,139,250,0.04);
+            border-color: rgba(167,139,250,0.15);
+            color: #e5e7eb;
+        }
+
+        /* Translate button */
+        .btn-wrap { text-align: center; }
+
+        .translate-btn {
+            position: relative;
+            padding: 16px 60px;
+            background: linear-gradient(135deg, #7c3aed, #db2777);
+            border: none;
+            border-radius: 14px;
+            color: white;
+            font-size: 1rem;
+            font-weight: bold;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            cursor: pointer;
+            overflow: hidden;
+            transition: all 0.3s;
+            box-shadow: 0 4px 30px rgba(124,58,237,0.4), 0 0 0 1px rgba(255,255,255,0.05);
+        }
+
+        .translate-btn::before {
+            content: '';
+            position: absolute;
+            top: 0; left: -100%;
+            width: 100%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            transition: left 0.5s;
+        }
+
+        .translate-btn:hover::before { left: 100%; }
+
+        .translate-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 40px rgba(124,58,237,0.6), 0 0 0 1px rgba(255,255,255,0.1);
+        }
+
+        .translate-btn:active { transform: translateY(0); }
+
+        /* Stats row */
+        .stats-row {
             display: flex;
             justify-content: center;
-            gap: 20px;
-            margin-top: 16px;
-            flex-wrap: wrap;
+            gap: 30px;
+            margin-top: 40px;
         }
 
-        .info-badge {
-            background: rgba(255,255,255,0.04);
+        .stat {
+            text-align: center;
+        }
+
+        .stat-num {
+            font-size: 1.8rem;
+            font-weight: 900;
+            background: linear-gradient(135deg, #a78bfa, #f472b6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .stat-label {
+            font-size: 0.7rem;
+            color: #4b5563;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-top: 4px;
+        }
+
+        .divider {
+            width: 1px;
+            height: 40px;
+            background: rgba(255,255,255,0.06);
+            align-self: center;
+        }
+
+        /* Copy button */
+        .copy-btn {
+            position: absolute;
+            top: 36px;
+            right: 12px;
+            background: rgba(255,255,255,0.06);
             border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 20px;
-            padding: 6px 16px;
-            font-size: 0.8rem;
+            border-radius: 8px;
             color: #6b7280;
+            padding: 6px 10px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
         }
 
-        .info-badge span { color: #a78bfa; }
+        .copy-btn:hover {
+            background: rgba(167,139,250,0.1);
+            color: #a78bfa;
+            border-color: rgba(167,139,250,0.3);
+        }
+
+        /* Floating particles */
+        .particle {
+            position: fixed;
+            border-radius: 50%;
+            pointer-events: none;
+            animation: particleFloat linear infinite;
+            opacity: 0;
+        }
+
+        @keyframes particleFloat {
+            0% { transform: translateY(100vh) rotate(0deg); opacity: 0; }
+            10% { opacity: 0.6; }
+            90% { opacity: 0.6; }
+            100% { transform: translateY(-100px) rotate(720deg); opacity: 0; }
+        }
     </style>
 </head>
 <body>
-    <div class="stars" id="stars"></div>
+    <div class="orb orb1"></div>
+    <div class="orb orb2"></div>
+    <div class="orb orb3"></div>
+    <div class="grid-bg"></div>
 
     <div class="content">
-        <div class="logo">🎵</div>
-        <h1>AI Music Generator</h1>
-        <p class="subtitle">Neural Pattern · MIDI Synthesis · Real Time</p>
+        <div class="header">
+            <div class="badge">⚡ Powered by Google AI</div>
+            <h1><span class="gradient-text">Language Translation</span></h1>
+            <p>Break every language barrier · Instantly</p>
+        </div>
 
-        <div class="card">
-            <form method="POST" id="musicForm">
-
-                <div style="margin-bottom: 12px;">
-                    <div class="slider-label" style="margin-bottom: 14px;">Select Genre</div>
-                    <div class="genre-grid">
-                        <div class="genre-btn active" onclick="selectGenre('classical', this)">
-                            <span class="genre-icon">🎼</span>Classical
-                        </div>
-                        <div class="genre-btn" onclick="selectGenre('jazz', this)">
-                            <span class="genre-icon">🎷</span>Jazz
-                        </div>
-                        <div class="genre-btn" onclick="selectGenre('happy', this)">
-                            <span class="genre-icon">😊</span>Happy
-                        </div>
-                        <div class="genre-btn" onclick="selectGenre('sad', this)">
-                            <span class="genre-icon">🌧️</span>Sad
-                        </div>
-                        <div class="genre-btn" onclick="selectGenre('random', this)">
-                            <span class="genre-icon">🎲</span>Random
-                        </div>
+        <div class="translator-card">
+            <form method="POST">
+                <div class="lang-row">
+                    <div class="lang-select-wrap">
+                        <div class="lang-label">From Language</div>
+                        <select name="src" id="srcLang">
+                            <option value="auto">🌐 Auto Detect</option>
+                            <option value="en">🇺🇸 English</option>
+                            <option value="ur">🇵🇰 Urdu</option>
+                            <option value="fr">🇫🇷 French</option>
+                            <option value="es">🇪🇸 Spanish</option>
+                            <option value="ar">🇸🇦 Arabic</option>
+                            <option value="zh-CN">🇨🇳 Chinese</option>
+                            <option value="de">🇩🇪 German</option>
+                            <option value="ja">🇯🇵 Japanese</option>
+                            <option value="ko">🇰🇷 Korean</option>
+                            <option value="hi">🇮🇳 Hindi</option>
+                            <option value="tr">🇹🇷 Turkish</option>
+                            <option value="ru">🇷🇺 Russian</option>
+                            <option value="it">🇮🇹 Italian</option>
+                        </select>
                     </div>
-                    <input type="hidden" name="genre" id="genreInput" value="classical">
+
+                    <button type="button" class="swap-btn" onclick="swapLangs()">⇄</button>
+
+                    <div class="lang-select-wrap">
+                        <div class="lang-label">To Language</div>
+                        <select name="dest" id="destLang">
+                            <option value="ur">🇵🇰 Urdu</option>
+                            <option value="en">🇺🇸 English</option>
+                            <option value="fr">🇫🇷 French</option>
+                            <option value="es">🇪🇸 Spanish</option>
+                            <option value="ar">🇸🇦 Arabic</option>
+                            <option value="zh-CN">🇨🇳 Chinese</option>
+                            <option value="de">🇩🇪 German</option>
+                            <option value="ja">🇯🇵 Japanese</option>
+                            <option value="ko">🇰🇷 Korean</option>
+                            <option value="hi">🇮🇳 Hindi</option>
+                            <option value="tr">🇹🇷 Turkish</option>
+                            <option value="ru">🇷🇺 Russian</option>
+                            <option value="it">🇮🇹 Italian</option>
+                        </select>
+                    </div>
                 </div>
 
-                <div class="slider-group">
-                    <div class="slider-header">
-                        <span class="slider-label">Tempo</span>
-                        <span class="slider-value" id="tempoVal">120 BPM</span>
+                <div class="areas-row">
+                    <div class="area-wrap">
+                        <div class="area-label">Your Text</div>
+                        <textarea name="text" placeholder="Type or paste your text here...">{{ text }}</textarea>
                     </div>
-                    <input type="range" name="tempo" min="60" max="180" value="120"
-                           oninput="document.getElementById('tempoVal').textContent=this.value+' BPM'">
+                    <div class="area-wrap">
+                        <div class="area-label">Translation</div>
+                        <textarea class="result-area" readonly placeholder="Translation will appear here...">{{ translated }}</textarea>
+                        {% if translated %}
+                        <button type="button" class="copy-btn" onclick="copyText()">Copy</button>
+                        {% endif %}
+                    </div>
                 </div>
 
-                <div class="slider-group">
-                    <div class="slider-header">
-                        <span class="slider-label">Number of Notes</span>
-                        <span class="slider-value" id="notesVal">32 Notes</span>
-                    </div>
-                    <input type="range" name="notes" min="16" max="64" value="32"
-                           oninput="document.getElementById('notesVal').textContent=this.value+' Notes'">
+                <div class="btn-wrap">
+                    <button type="submit" class="translate-btn">✨ Translate Now</button>
                 </div>
-
-                <button type="submit" class="generate-btn">✨ Generate Music with AI</button>
             </form>
+        </div>
 
-            {% if generated %}
-            <div class="result-card">
-                <p class="result-title">✅ YOUR MUSIC IS READY</p>
-                <div class="visualizer" id="viz"></div>
-                <a href="/download" class="download-btn">⬇️ Download MIDI File</a>
-                <div class="info-row">
-                    <div class="info-badge">Genre: <span>{{ genre }}</span></div>
-                    <div class="info-badge">Tempo: <span>{{ tempo }} BPM</span></div>
-                    <div class="info-badge">Notes: <span>{{ notes }}</span></div>
-                </div>
+        <div class="stats-row">
+            <div class="stat">
+                <div class="stat-num">13+</div>
+                <div class="stat-label">Languages</div>
             </div>
-            {% endif %}
+            <div class="divider"></div>
+            <div class="stat">
+                <div class="stat-num">AI</div>
+                <div class="stat-label">Powered</div>
+            </div>
+            <div class="divider"></div>
+            <div class="stat">
+                <div class="stat-num">100%</div>
+                <div class="stat-label">Free</div>
+            </div>
+            <div class="divider"></div>
+            <div class="stat">
+                <div class="stat-num">∞</div>
+                <div class="stat-label">Translations</div>
+            </div>
         </div>
     </div>
 
     <script>
-        // Stars background
-        const starsEl = document.getElementById('stars');
-        for (let i = 0; i < 80; i++) {
-            const star = document.createElement('div');
-            star.className = 'star';
-            const size = Math.random() * 2 + 1;
-            star.style.cssText = `width:${size}px;height:${size}px;top:${Math.random()*100}%;left:${Math.random()*100}%;animation-delay:${Math.random()*3}s;animation-duration:${2+Math.random()*3}s`;
-            starsEl.appendChild(star);
+        // Floating particles
+        for (let i = 0; i < 15; i++) {
+            const p = document.createElement('div');
+            p.className = 'particle';
+            const size = Math.random() * 4 + 2;
+            const colors = ['#7c3aed','#db2777','#2563eb','#a78bfa','#f472b6'];
+            p.style.cssText = `
+                width:${size}px; height:${size}px;
+                left:${Math.random()*100}%;
+                background:${colors[Math.floor(Math.random()*colors.length)]};
+                animation-duration:${8+Math.random()*12}s;
+                animation-delay:${Math.random()*10}s;
+            `;
+            document.body.appendChild(p);
         }
 
-        // Genre selector
-        function selectGenre(genre, el) {
-            document.querySelectorAll('.genre-btn').forEach(b => b.classList.remove('active'));
-            el.classList.add('active');
-            document.getElementById('genreInput').value = genre;
+        // Swap languages
+        function swapLangs() {
+            const src = document.getElementById('srcLang');
+            const dest = document.getElementById('destLang');
+            const temp = src.value;
+            src.value = dest.value;
+            dest.value = temp;
         }
 
-        // Visualizer bars
-        const viz = document.getElementById('viz');
-        if (viz) {
-            const colors = ['#f472b6','#a78bfa','#60a5fa','#34d399','#fbbf24'];
-            for (let i = 0; i < 30; i++) {
-                const bar = document.createElement('div');
-                bar.className = 'bar';
-                const h = Math.random() * 50 + 20;
-                bar.style.cssText = `height:${h}px;background:${colors[i%colors.length]};animation-delay:${Math.random()*0.8}s;animation-duration:${0.4+Math.random()*0.6}s`;
-                viz.appendChild(bar);
-            }
+        // Copy translation
+        function copyText() {
+            const result = document.querySelectorAll('textarea')[1].value;
+            navigator.clipboard.writeText(result);
         }
+
+        // 3D card mouse effect
+        const card = document.querySelector('.translator-card');
+        card.addEventListener('mousemove', e => {
+            const rect = card.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / rect.width - 0.5;
+            const y = (e.clientY - rect.top) / rect.height - 0.5;
+            card.style.transform = `perspective(1000px) rotateX(${-y*4}deg) rotateY(${x*4}deg)`;
+        });
+        card.addEventListener('mouseleave', () => {
+            card.style.transform = 'perspective(1000px) rotateX(1deg)';
+        });
     </script>
 </body>
 </html>
 '''
 
-SCALES = {
-    'classical': [60, 62, 64, 65, 67, 69, 71, 72],
-    'jazz':      [60, 62, 63, 65, 67, 68, 70, 72],
-    'happy':     [60, 62, 64, 67, 69, 72, 74, 76],
-    'sad':       [60, 62, 63, 65, 67, 68, 70, 72],
-    'random':    [60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72]
-}
-
-last_midi = None
-last_genre = 'classical'
-last_tempo = 120
-last_notes = 32
-
-def generate_midi(genre, tempo, num_notes):
-    scale = SCALES.get(genre, SCALES['classical'])
-    midi = MIDIFile(1)
-    midi.addTempo(0, 0, tempo)
-    prev_note = random.choice(scale)
-    for i in range(num_notes):
-        neighbors = [n for n in scale if abs(n - prev_note) <= 4]
-        note = random.choice(neighbors if neighbors else scale)
-        duration = random.choice([0.5, 1, 1.5, 2])
-        velocity = random.randint(70, 110)
-        midi.addNote(0, 0, note, i * 0.5, duration, velocity)
-        prev_note = note
-    buf = io.BytesIO()
-    midi.writeFile(buf)
-    buf.seek(0)
-    return buf
-
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    global last_midi, last_genre, last_tempo, last_notes
-    generated = False
+    translated = ''
+    text = ''
     if request.method == 'POST':
-        last_genre = request.form.get('genre', 'classical')
-        last_tempo = int(request.form.get('tempo', 120))
-        last_notes = int(request.form.get('notes', 32))
-        last_midi = generate_midi(last_genre, last_tempo, last_notes)
-        generated = True
-    return render_template_string(HTML, generated=generated,
-                                  genre=last_genre, tempo=last_tempo, notes=last_notes)
-
-@app.route('/download')
-def download():
-    global last_midi
-    if last_midi is None:
-        return "No music generated yet!", 400
-    last_midi.seek(0)
-    return send_file(last_midi, mimetype='audio/midi',
-                    as_attachment=True, download_name='ai_music.mid')
+        text = request.form['text']
+        src = request.form['src']
+        dest = request.form['dest']
+        translated = GoogleTranslator(source=src, target=dest).translate(text)
+    return render_template_string(HTML, translated=translated, text=text)
 
 if __name__ == '__main__':
-    print("Open your browser at http://127.0.0.1:5003")
-    app.run(debug=False, port=5003)
+    app.run(debug=True)
